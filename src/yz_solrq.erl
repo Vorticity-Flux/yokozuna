@@ -24,7 +24,8 @@
 
 %% api
 -export([start_link/1, status/1, index/5, set_hwm/2, get_hwm/1, set_index/5,
-         reload_appenv/1, blown_fuse/2, healed_fuse/2, cancel_drain/1, all_queue_len/1]).
+         reload_appenv/1, blown_fuse/2, healed_fuse/2, cancel_drain/1,
+         all_queue_len/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -110,16 +111,21 @@ index(Index, BKey, Obj, Reason, P) ->
                     {index, Index, {BKey, Obj, Reason, P}}, infinity).
 
 
--spec set_hwm(pid, non_neg_integer()) -> #state{}.
-set_hwm(QPid, HWM) ->
-    gen_server:call(QPid, {set_hwm, HWM}).
+-spec set_hwm(pid, pos_integer()) -> #state{}.
+set_hwm(QPid, HWM) when HWM > 0 ->
+    gen_server:call(QPid, {set_hwm, HWM});
+set_hwm(_, _)  ->
+    {error, bad_hwm_value}.
 
 -spec set_index(pid(), index_name(), solrq_batch_min(), solrq_batch_max(),
                 solrq_delayms_max()) -> {ok, {solrq_batch_min(),
                                              solrq_batch_max(),
                                              solrq_delayms_max()}}.
-set_index(QPid, Index, Min, Max, DelayMax) ->
-    gen_server:call(QPid, {set_index, Index, Min, Max, DelayMax}).
+set_index(QPid, Index, Min, Max, DelayMax)
+  when Min > 0, Min =< Max, DelayMax >= 0 orelse DelayMax == infinity ->
+    gen_server:call(QPid, {set_index, Index, Min, Max, DelayMax});
+set_index(_, _, _, _, _) ->
+    {error, bad_index_params}.
 
 -spec reload_appenv(pid()) -> ok.
 reload_appenv(QPid) ->
@@ -197,8 +203,7 @@ handle_call({set_hwm, NewHWM}, _From, #state{queue_hwm = OldHWM} = State) ->
     {reply, {ok, OldHWM}, maybe_unblock_vnodes(State#state{queue_hwm = NewHWM})};
 handle_call(get_hwm, _From, #state{queue_hwm = HWM} = State) ->
     {reply, HWM, State};
-handle_call({set_index, Index, Min, Max, DelayMS}, _From, State) when
-      Min > 0, Min =< Max, DelayMS >= 0 orelse DelayMS == infinity ->
+handle_call({set_index, Index, Min, Max, DelayMS}, _From, State) ->
     IndexQ = get_indexq(Index, State),
     IndexQ2 = maybe_request_worker(Index,
                                    IndexQ#indexq{batch_min = Min,
@@ -208,12 +213,6 @@ handle_call({set_index, Index, Min, Max, DelayMS}, _From, State) when
                  IndexQ#indexq.batch_max,
                  IndexQ#indexq.delayms_max},
     {reply, {ok, OldParams}, update_indexq(Index, IndexQ2, State)};
-handle_call({set_index, Index, _Min, _Max, _DelayMS}, _From, State) ->
-    IndexQ = get_indexq(Index, State),
-    OldParams = {IndexQ#indexq.batch_min,
-                 IndexQ#indexq.batch_max,
-                 IndexQ#indexq.delayms_max},
-    {reply, {{error, bad_index_params}, OldParams}, State};
 handle_call(cancel_drain, _From, State) ->
     {noreply, NewState} = handle_cast(drain_complete, State),
     {reply, ok, NewState};
@@ -655,7 +654,7 @@ get_indexq(Index, #state{indexqs = IndexQs}) ->
     end.
 
 set_new_index(Min, Max, DelayMS)
-  when Min =< Max, DelayMS >= 0 orelse DelayMS == infinity ->
+  when Min > 0, Min =< Max, DelayMS >= 0 orelse DelayMS == infinity ->
     #indexq{batch_min = Min,
             batch_max = Max,
             delayms_max = DelayMS};

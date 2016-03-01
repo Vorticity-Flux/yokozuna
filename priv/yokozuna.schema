@@ -195,7 +195,7 @@
   {default, 10000},
   {datatype, integer},
   hidden,
-  {validators, ["integer"]}
+  {validators, ["positive_integer"]}
 ]}.
 
 %% @doc The number of solr queue workers to instantiate in the Yokozuna
